@@ -1,0 +1,445 @@
+#!/usr/bin/env python3
+"""omarchy-obsidian — wire the Obsidian note app into the Omarchy desktop.
+
+Commands
+    vault     discover the vaults Obsidian knows about
+    capture   append text to today's daily note (creating it if needed)
+    today     open today's daily note (obsidian:// URI)
+    theme     regenerate the vault CSS snippet from the APPLIED Omarchy theme
+    bindings  print the Hyprland keybinding module
+
+Nothing here hardcodes a colour palette: every colour is read at runtime from the
+applied theme's ``colors.toml`` so all stock Omarchy themes work unchanged.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import urllib.parse
+
+# ── paths / defaults ──────────────────────────────────────────────────────
+
+DEFAULT_OBSIDIAN_JSON = "~/.config/obsidian/obsidian.json"
+DEFAULT_COLORS = "~/.local/state/omarchy/current/theme/colors.toml"
+DEFAULT_SNIPPET = "omarchy-theme"
+DEFAULT_DAILY_FORMAT = "YYYY-MM-DD"
+SNIPPET_DIR = ".obsidian/snippets"
+
+
+def expand(path: str) -> pathlib.Path:
+    return pathlib.Path(os.path.expanduser(path))
+
+
+def read_json(path: pathlib.Path, default):
+    """Load JSON, returning `default` when the file is absent or unparsable."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+def slug_theme(name: str) -> str:
+    """Normalise a theme name the way Omarchy's directories are named."""
+    return name.strip().lower().replace(" ", "-")
+
+
+# ── vault discovery ───────────────────────────────────────────────────────
+
+
+def list_vaults(config_path: pathlib.Path) -> list[dict]:
+    """Every vault recorded in obsidian.json, in file order."""
+    data = read_json(config_path, {})
+    vaults = data.get("vaults") if isinstance(data, dict) else None
+    if not isinstance(vaults, dict):
+        return []
+    out = []
+    for vid, meta in vaults.items():
+        if not isinstance(meta, dict):
+            continue
+        out.append({"id": vid,
+                    "path": str(meta.get("path", "")),
+                    "open": bool(meta.get("open", False))})
+    return out
+
+
+def select_vault(vaults: list[dict], wanted: str | None) -> dict | None:
+    """Pick a vault: an explicit path/id/name wins, else the one marked open,
+    else the first. Returns None when there is nothing to choose from."""
+    if not vaults:
+        return None
+    if wanted:
+        target = wanted.rstrip("/")
+        for v in vaults:
+            if v["id"] == wanted or v["path"] == target:
+                return v
+            if pathlib.Path(v["path"]).name == wanted:
+                return v
+        return None
+    for v in vaults:
+        if v["open"]:
+            return v
+    return vaults[0]
+
+
+# ── daily notes ───────────────────────────────────────────────────────────
+
+# Obsidian's daily-note format is a moment.js string. Translate the common
+# tokens to strftime, longest-first so MMMM/YYYY never get split.
+_MOMENT = [
+    ("YYYY", "%Y"), ("YY", "%y"), ("MMMM", "%B"), ("MMM", "%b"),
+    ("MM", "%m"), ("DD", "%d"), ("dddd", "%A"), ("ddd", "%a"),
+    ("HH", "%H"), ("mm", "%M"), ("ss", "%S"), ("D", "%d"),
+]
+
+
+def moment_to_strftime(fmt: str) -> str:
+    out = fmt
+    for token, repl in _MOMENT:
+        out = out.replace(token, repl)
+    return out
+
+
+def daily_config(vault: pathlib.Path) -> dict:
+    """The vault's daily-notes settings, with Obsidian's own defaults."""
+    cfg = read_json(vault / ".obsidian" / "daily-notes.json", {})
+    if not isinstance(cfg, dict):
+        cfg = {}
+    folder = cfg.get("folder")
+    fmt = cfg.get("format")
+    return {"folder": folder if isinstance(folder, str) else "",
+            "format": fmt if isinstance(fmt, str) and fmt else DEFAULT_DAILY_FORMAT,
+            "template": cfg.get("template") if isinstance(cfg.get("template"), str) else ""}
+
+
+def daily_note_path(vault: pathlib.Path, date: _dt.date, cfg: dict) -> pathlib.Path:
+    rel = date.strftime(moment_to_strftime(cfg["format"])) + ".md"
+    folder = cfg.get("folder") or ""
+    return vault / folder / rel if folder else vault / rel
+
+
+def note_uri(vault: pathlib.Path, note: pathlib.Path) -> str:
+    """An obsidian://open URI for `note` inside `vault`."""
+    try:
+        rel = note.relative_to(vault).with_suffix("")
+    except ValueError:
+        rel = note.with_suffix("")
+    return ("obsidian://open?vault=" + urllib.parse.quote(vault.name)
+            + "&file=" + urllib.parse.quote(rel.as_posix()))
+
+
+# ── capture ───────────────────────────────────────────────────────────────
+
+
+def append_capture(note: pathlib.Path, date: _dt.date, text: str) -> bool:
+    """Append `text` to `note`, creating it (with a heading) when missing.
+
+    Returns True when the note was created, False when text was appended.
+    """
+    note.parent.mkdir(parents=True, exist_ok=True)
+    if note.exists():
+        existing = note.read_text()
+        sep = "" if existing.endswith("\n") or not existing else "\n"
+        note.write_text(existing + sep + text + "\n")
+        return False
+    note.write_text(f"# {date.isoformat()}\n\n{text}\n")
+    return True
+
+
+# ── theme snippet ─────────────────────────────────────────────────────────
+
+
+def parse_colors(text: str) -> dict:
+    """Parse the flat ``key = "value"`` colours file Omarchy writes.
+
+    A ``#`` only starts a comment at the start of a line — a quoted hex value
+    legitimately contains a ``#``, so it must never be treated as an inline
+    comment marker.
+    """
+    out = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip().strip('"').strip("'")
+        if key.strip() and value:
+            out[key.strip()] = value
+    return out
+
+
+def pick(colors: dict, *names: str) -> str:
+    """First non-empty value among `names` — keeps the source palette-free."""
+    for name in names:
+        value = colors.get(name, "")
+        if value:
+            return value
+    return ""
+
+
+def render_snippet(colors: dict, theme: str) -> str:
+    """Build the Obsidian CSS snippet purely from the applied theme's colours."""
+    bg = pick(colors, "background", "dark_background")
+    fg = pick(colors, "foreground", "bright_foreground")
+    sel = pick(colors, "selection", "muted")
+    muted = pick(colors, "muted", "dark_foreground")
+    accent = pick(colors, "accent", "blue")
+    red = pick(colors, "red")
+    green = pick(colors, "green")
+    yellow = pick(colors, "yellow", "orange")
+    blue = pick(colors, "blue")
+    magenta = pick(colors, "magenta")
+    cyan = pick(colors, "cyan")
+    return f"""/* Omarchy theme for Obsidian — generated by omarchy-obsidian.
+ * Applied theme: {theme}
+ * Regenerate with:  omarchy-obsidian theme
+ * Colours are read live from the theme's colors.toml; edit that, not this file. */
+
+.theme-dark, .theme-light {{
+  --background-primary: {bg};
+  --background-primary-alt: {bg};
+  --background-secondary: {bg};
+  --text-normal: {fg};
+  --text-selection: {sel};
+  --background-modifier-border: {muted};
+  --text-title-h1: {red};
+  --text-title-h2: {green};
+  --text-title-h3: {yellow};
+  --text-title-h4: {blue};
+  --text-title-h5: {magenta};
+  --text-title-h6: {magenta};
+  --text-link: {blue};
+  --text-accent: {accent};
+  --interactive-accent: {accent};
+  --code-normal: {cyan};
+  --text-error: {red};
+  --text-success: {green};
+  --tag-color: {cyan};
+  --tag-background: {muted};
+  --graph-node: {accent};
+  --graph-node-focused: {blue};
+}}
+
+.cm-header-1, .markdown-rendered h1 {{ color: var(--text-title-h1); }}
+.cm-header-2, .markdown-rendered h2 {{ color: var(--text-title-h2); }}
+.cm-header-3, .markdown-rendered h3 {{ color: var(--text-title-h3); }}
+.cm-header-4, .markdown-rendered h4 {{ color: var(--text-title-h4); }}
+.cm-header-5, .markdown-rendered h5 {{ color: var(--text-title-h5); }}
+.cm-header-6, .markdown-rendered h6 {{ color: var(--text-title-h6); }}
+.markdown-rendered a {{ color: var(--text-link); }}
+.markdown-rendered code {{ color: var(--code-normal); }}
+.markdown-rendered blockquote {{ border-left-color: {accent}; }}
+"""
+
+
+def snippet_path(vault: pathlib.Path, name: str) -> pathlib.Path:
+    return vault / SNIPPET_DIR / f"{name}.css"
+
+
+def write_snippet(path: pathlib.Path, css: str) -> None:
+    """Write atomically — never through a symlink into the plugin itself."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(css)
+    os.replace(tmp, path)
+
+
+# ── bindings ──────────────────────────────────────────────────────────────
+
+
+def bindings_file() -> pathlib.Path:
+    return pathlib.Path(__file__).resolve().parent / "bindings.lua"
+
+
+def bindings_text() -> str:
+    try:
+        return bindings_file().read_text()
+    except OSError:
+        return ""
+
+
+def open_uri(uri: str, opener: str | None = None) -> int:
+    """Hand the URI to the desktop opener. Overridable for tests."""
+    program = opener or os.environ.get("OMARCHY_OBSIDIAN_OPENER") or "xdg-open"
+    try:
+        return subprocess.run([program, uri]).returncode
+    except OSError:
+        return 1
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────
+
+
+def _load_plugin_config(path: str) -> dict:
+    return read_json(expand(path), {})
+
+
+def _resolve_vault(args, plugin_cfg: dict):
+    """(vault_path, error_message). Reads obsidian.json + optional overrides."""
+    if args.vault_path:
+        return expand(args.vault_path), None
+    vaults = list_vaults(expand(args.obsidian_json))
+    if not vaults:
+        return None, f"no vaults found in {args.obsidian_json}"
+    wanted = args.vault or plugin_cfg.get("vault")
+    chosen = select_vault(vaults, wanted)
+    if chosen is None:
+        return None, f"no vault matches {wanted!r}"
+    return expand(chosen["path"]), None
+
+
+def cmd_vault(args, plugin_cfg) -> int:
+    vaults = list_vaults(expand(args.obsidian_json))
+    if args.json:
+        print(json.dumps(vaults, indent=2))
+        return 0
+    if not vaults:
+        print("no vaults recorded")
+        return 0
+    for v in vaults:
+        mark = "*" if v["open"] else " "
+        print(f"{mark} {v['id']}  {v['path']}")
+    return 0
+
+
+def cmd_capture(args, plugin_cfg) -> int:
+    vault, err = _resolve_vault(args, plugin_cfg)
+    if err:
+        print(err, file=sys.stderr)
+        return 1
+    text = args.text
+    if text is None:
+        text = sys.stdin.read().rstrip("\n")
+    if not text:
+        print("nothing to capture", file=sys.stderr)
+        return 1
+    date = _parse_date(args.date)
+    note = daily_note_path(vault, date, daily_config(vault))
+    created = append_capture(note, date, text)
+    if args.json:
+        print(json.dumps({"path": str(note), "created": created}))
+    else:
+        print(("created " if created else "appended ") + str(note))
+    return 0
+
+
+def cmd_today(args, plugin_cfg) -> int:
+    vault, err = _resolve_vault(args, plugin_cfg)
+    if err:
+        print(err, file=sys.stderr)
+        return 1
+    date = _parse_date(args.date)
+    note = daily_note_path(vault, date, daily_config(vault))
+    if not note.exists() and not args.no_create:
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(f"# {date.isoformat()}\n")
+    uri = note_uri(vault, note)
+    if args.print or args.json:
+        print(json.dumps({"uri": uri, "path": str(note)}) if args.json else uri)
+        return 0
+    return open_uri(uri, args.opener)
+
+
+def cmd_theme(args, plugin_cfg) -> int:
+    colors_path = expand(args.colors or DEFAULT_COLORS)
+    if not colors_path.is_file():
+        print(f"no applied theme at {colors_path}", file=sys.stderr)
+        return 1
+    colors = parse_colors(colors_path.read_text())
+    if not colors:
+        print(f"theme file {colors_path} carried no colours", file=sys.stderr)
+        return 1
+    theme = slug_theme(args.theme or colors_path.parent.name)
+    css = render_snippet(colors, theme)
+    if args.print:
+        sys.stdout.write(css)
+        return 0
+    vault, err = _resolve_vault(args, plugin_cfg)
+    if err:
+        print(err, file=sys.stderr)
+        return 1
+    name = args.snippet or plugin_cfg.get("snippet") or DEFAULT_SNIPPET
+    path = snippet_path(vault, name)
+    write_snippet(path, css)
+    if args.json:
+        print(json.dumps({"path": str(path), "theme": theme, "keys": sorted(colors)}))
+    else:
+        print(f"wrote {path} ({theme})")
+    return 0
+
+
+def cmd_bindings(args, plugin_cfg) -> int:
+    text = bindings_text()
+    if not text:
+        print("bindings.lua not found next to the CLI", file=sys.stderr)
+        return 1
+    sys.stdout.write(text)
+    return 0
+
+
+def _parse_date(value: str | None) -> _dt.date:
+    if value:
+        try:
+            return _dt.date.fromisoformat(value)
+        except ValueError:
+            raise SystemExit(f"bad --date {value!r} (want YYYY-MM-DD)")
+    return _dt.date.today()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="omarchy-obsidian", description=__doc__)
+    ap.add_argument("--obsidian-json", default=DEFAULT_OBSIDIAN_JSON,
+                    help="path to Obsidian's obsidian.json")
+    ap.add_argument("--config", default="~/.config/omarchy-obsidian/config.json",
+                    help="plugin config (vault, snippet)")
+    ap.add_argument("--vault-path", help="use this vault directory directly")
+    ap.add_argument("--vault", help="select a vault by id, path or folder name")
+    # Options shared by every subcommand, so `--json`/`--date` work after the verb.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--date", help="override today's date (YYYY-MM-DD)")
+    common.add_argument("--json", action="store_true")
+    sub = ap.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("vault", parents=[common],
+                   help="list discovered vaults").set_defaults(fn=cmd_vault)
+
+    cap = sub.add_parser("capture", parents=[common],
+                         help="append text to today's daily note")
+    cap.add_argument("text", nargs="?", help="text to append (default: stdin)")
+    cap.set_defaults(fn=cmd_capture)
+
+    today = sub.add_parser("today", parents=[common], help="open today's daily note")
+    today.add_argument("--print", action="store_true", help="print the URI, do not open")
+    today.add_argument("--no-create", action="store_true", help="do not create the note")
+    today.add_argument("--opener", help="program used to open the URI (default xdg-open)")
+    today.set_defaults(fn=cmd_today)
+
+    theme = sub.add_parser("theme", parents=[common],
+                           help="regenerate the vault CSS snippet")
+    theme.add_argument("--colors", help="colors.toml to read (default: applied theme)")
+    theme.add_argument("--theme", help="theme name to stamp into the snippet")
+    theme.add_argument("--snippet", help="snippet basename (default: omarchy-theme)")
+    theme.add_argument("--print", action="store_true", help="print the CSS, do not write")
+    theme.set_defaults(fn=cmd_theme)
+
+    sub.add_parser("bindings", parents=[common],
+                   help="print the Hyprland keybinding module").set_defaults(fn=cmd_bindings)
+    return ap
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    plugin_cfg = _load_plugin_config(args.config)
+    return args.fn(args, plugin_cfg)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

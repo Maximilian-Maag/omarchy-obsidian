@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "Maximilian-Maag.obsidian",
+  "name": "Obsidian",
+  "version": "0.1.0",
+  "author": "Maximilian-Maag",
+  "license": "MIT",
+  "description": "Wire the Obsidian note app into Omarchy: discover vaults, capture to and open today's daily note, and regenerate the vault CSS snippet from the applied theme so notes follow the desktop palette.",
+  "kinds": [
+    "cli",
+    "hyprland-module"
+  ],
+  "activation": "auto",
+  "entryPoints": {},
+  "omarchy_meta": {
+    "installScript": "install.sh",
+    "hooks": [
+      "theme-set"
+    ],
+    "features": [
+      "Discovers the vaults Obsidian already knows (reads obsidian.json, never guesses)",
+      "capture appends text to today's daily note, creating it with a heading when missing",
+      "today opens today's daily note via an obsidian:// URI",
+      "theme regenerates the vault CSS snippet live from the applied theme's colors.toml — no baked-in palette",
+      "Honours the vault's own daily-notes folder/format settings",
+      "Hyprland keybindings for today/capture/theme",
+      "Uniquely named theme-set hook that self-locates its plugin"
+    ]
+  }
+}

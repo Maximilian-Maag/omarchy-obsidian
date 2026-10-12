@@ -1,0 +1,37 @@
+#!/bin/bash
+# omarchy hook: theme-set — regenerate omarchy-obsidian's vault CSS snippet.
+#
+# `omarchy-hook theme-set "<Theme Name>"` calls this with the theme as $1.
+#
+# Two hazards this hook is written around:
+#   * `omarchy hook install <type> <file>` installs the hook under the file's
+#     BASENAME, so this file is named `obsidian-theme-set` (not `theme-set`) to
+#     avoid clobbering another plugin's theme hook.
+#   * An installed hook cannot find its plugin relative to its own location —
+#     once copied into the hooks directory that path resolves to the hooks dir.
+#     So it self-locates instead.
+set -uo pipefail
+
+THEME=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+[[ -z $THEME ]] && exit 0
+
+# Self-locate the plugin: an explicit override, the installed plugin dir, then a
+# development checkout. The first candidate that actually holds the CLI wins.
+find_plugin() {
+  local cand
+  for cand in "${OMARCHY_OBSIDIAN_DIR:-}" \
+              "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/Maximilian-Maag.obsidian" \
+              "$HOME/Work/omarchy-obsidian"; do
+    [[ -x $cand/bin/omarchy-obsidian ]] && { printf '%s\n' "$cand"; return 0; }
+  done
+  false
+}
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-obsidian"
+mkdir -p "$STATE_DIR"
+printf '%s\n' "$THEME" > "$STATE_DIR/active-theme"
+
+if PLUGIN=$(find_plugin); then
+  "$PLUGIN/bin/omarchy-obsidian" theme --theme "$THEME" &>/dev/null
+fi
+exit 0
