@@ -143,6 +143,28 @@ class CliIntegration(unittest.TestCase):
         self.assertIn("--interactive-accent: #82FB9C;", css)
         self.assertIn("Applied theme: tokyo-night", css)
 
+    def test_theme_names_the_recorded_applied_theme(self):
+        state = self.root / "state" / "omarchy-obsidian"
+        state.mkdir(parents=True)
+        (state / "active-theme").write_text("tokyo-night\n")
+        env = dict(os.environ, XDG_STATE_HOME=str(self.root / "state"))
+        r = subprocess.run(
+            [sys.executable, str(CLI), "--obsidian-json", str(self.oj),
+             "--config", str(self.cfg), "theme", "--colors", str(self.colors), "--print"],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Applied theme: tokyo-night", r.stdout)
+
+    def test_theme_never_reports_the_directory_name(self):
+        # The applied theme dir is literally "theme"; the header must never echo it.
+        env = dict(os.environ, XDG_STATE_HOME=str(self.root / "empty-state"))
+        r = subprocess.run(
+            [sys.executable, str(CLI), "--obsidian-json", str(self.oj),
+             "--config", str(self.cfg), "theme", "--colors", str(self.colors), "--print"],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Applied theme: theme", r.stdout)
+
     def test_theme_print_does_not_write(self):
         r = self.run_cli("theme", "--colors", str(self.colors), "--print")
         self.assertEqual(r.returncode, 0, r.stderr)

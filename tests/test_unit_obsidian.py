@@ -241,6 +241,46 @@ class ColorTests(unittest.TestCase):
         self.assertIn("--text-normal: #fafafa;", css)
         self.assertIn("--text-selection: #222222;", css)
 
+    def test_render_snippet_marks_an_unresolved_theme_unknown(self):
+        css = obs.render_snippet({"background": "#010101"}, "")
+        self.assertIn("Applied theme: (unknown)", css)
+
+    def test_state_home_honours_xdg(self):
+        with unittest.mock.patch.dict(os.environ, {"XDG_STATE_HOME": "/tmp/st"}):
+            self.assertEqual(obs.state_home(), pathlib.Path("/tmp/st"))
+
+    def test_config_home_honours_xdg(self):
+        with unittest.mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": "/tmp/cfg"}):
+            self.assertEqual(obs.config_home(), pathlib.Path("/tmp/cfg"))
+
+    def test_recorded_theme_name_reads_the_state_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "omarchy-obsidian").mkdir()
+            (pathlib.Path(d) / "omarchy-obsidian" / "active-theme").write_text("tokyo-night\n")
+            with unittest.mock.patch.dict(os.environ, {"XDG_STATE_HOME": d}):
+                self.assertEqual(obs.recorded_theme_name(), "tokyo-night")
+
+    def test_recorded_theme_name_empty_when_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            with unittest.mock.patch.dict(os.environ, {"XDG_STATE_HOME": d}):
+                self.assertEqual(obs.recorded_theme_name(), "")
+
+    def test_resolve_theme_name_matches_an_installed_theme(self):
+        with tempfile.TemporaryDirectory() as d:
+            theme = pathlib.Path(d) / "hackerman"
+            theme.mkdir()
+            theme.joinpath("colors.toml").write_text(
+                'background = "#0B0C16"\nforeground = "#ddf7ff"\n')
+            colors = obs.parse_colors('background = "#0B0C16"\nforeground = "#ddf7ff"\n')
+            self.assertEqual(obs.resolve_theme_name(colors, [theme]), "hackerman")
+
+    def test_resolve_theme_name_empty_for_an_unknown_theme(self):
+        with tempfile.TemporaryDirectory() as d:
+            theme = pathlib.Path(d) / "other"
+            theme.mkdir()
+            theme.joinpath("colors.toml").write_text('background = "#000000"\n')
+            self.assertEqual(obs.resolve_theme_name({"background": "#ffffff"}, [theme]), "")
+
     def test_snippet_path(self):
         self.assertEqual(obs.snippet_path(pathlib.Path("/v"), "omarchy-theme"),
                          pathlib.Path("/v/.obsidian/snippets/omarchy-theme.css"))

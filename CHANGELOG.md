@@ -2,6 +2,18 @@
 
 All notable changes to omarchy-obsidian are documented here.
 
+## [0.1.1] — 2026-10-28
+
+### Fixed
+- **The `theme` command labelled the applied theme as literally "theme"** (#1). It took
+  the colors path's parent directory name, but the applied `colors.toml` is a copy under a
+  fixed `theme` directory, so the name is never in the path — the generated snippet carried
+  `Applied theme: theme` (and `install.sh` produced one too). `theme` now recovers the name
+  the theme-set hook recorded (`<state>/omarchy-obsidian/active-theme`), then falls back to
+  matching the applied colours against the installed theme dirs — exactly what the sibling
+  plugins (docker/mpv/tmux resolve, voxtype records) do — and shows `(unknown)` rather than
+  the misleading directory name.
+
 ## [0.1.0] — 2026-10-12
 
 ### Added
