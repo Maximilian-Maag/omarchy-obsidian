@@ -155,6 +155,24 @@ class CliIntegration(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Applied theme: tokyo-night", r.stdout)
 
+    def test_current_theme_name_beats_a_stale_stamp(self):
+        # Omarchy's own record (current/theme.name) is authoritative and must win over a
+        # stale hook stamp, so the header never lies about the applied theme.
+        state = self.root / "state"
+        (state / "omarchy" / "current").mkdir(parents=True)
+        (state / "omarchy" / "current" / "theme.name").write_text("yellow-on-black\n")
+        stamp = state / "omarchy-obsidian"
+        stamp.mkdir(parents=True)
+        (stamp / "active-theme").write_text("tokyo-night\n")     # stale
+        env = dict(os.environ, XDG_STATE_HOME=str(state))
+        r = subprocess.run(
+            [sys.executable, str(CLI), "--obsidian-json", str(self.oj),
+             "--config", str(self.cfg), "theme", "--colors", str(self.colors), "--print"],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Applied theme: yellow-on-black", r.stdout)
+        self.assertNotIn("tokyo-night", r.stdout)
+
     def test_theme_never_reports_the_directory_name(self):
         # The applied theme dir is literally "theme"; the header must never echo it.
         env = dict(os.environ, XDG_STATE_HOME=str(self.root / "empty-state"))

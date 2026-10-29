@@ -2,6 +2,18 @@
 
 All notable changes to omarchy-obsidian are documented here.
 
+## [0.1.2] — 2026-10-28
+
+### Fixed
+- **The applied theme name was resolved from a stale hook stamp** (#2). `cmd_theme`
+  preferred `<state>/omarchy-obsidian/active-theme` (written only by the theme-set hook)
+  over both Omarchy's authoritative `<state>/omarchy/current/theme.name` — rewritten on
+  every theme change with no dependency on the hook — and the live colour match. A stamp
+  left stale by a hook that failed to run stamped the wrong theme name into the snippet.
+  Resolution is now: explicit `--theme` → `current/theme.name` → colour match → hook stamp.
+  New `applied_theme_name()` with unit + integration tests, incl. that a stale stamp no
+  longer wins over a live source.
+
 ## [0.1.1] — 2026-10-28
 
 ### Fixed

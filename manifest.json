@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "Maximilian-Maag.obsidian",
   "name": "Obsidian",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "Maximilian-Maag",
   "license": "MIT",
   "description": "Wire the Obsidian note app into Omarchy: discover vaults, capture to and open today's daily note, and regenerate the vault CSS snippet from the applied theme so notes follow the desktop palette.",

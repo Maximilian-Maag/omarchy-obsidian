@@ -60,6 +60,19 @@ def config_home() -> pathlib.Path:
     return pathlib.Path(os.environ.get("XDG_CONFIG_HOME") or (pathlib.Path.home() / ".config"))
 
 
+def omarchy_theme_name() -> str:
+    """Omarchy's own record of the applied theme, or ``""``.
+
+    ``omarchy-theme-set`` writes the slug to ``<state>/omarchy/current/theme.name`` on
+    EVERY theme change, independently of this plugin's hook, so it is the authoritative,
+    always-current name. The colour match and the hook stamp are only fallbacks.
+    """
+    try:
+        return slug_theme((state_home() / "omarchy" / "current" / "theme.name").read_text())
+    except OSError:
+        return ""
+
+
 def recorded_theme_name() -> str:
     """The theme name the theme-set hook last recorded, or ``""``.
 
@@ -99,6 +112,17 @@ def resolve_theme_name(colors: dict, search_dirs: list[pathlib.Path]) -> str:
         if parse_colors(candidate.read_text()) == colors:
             return directory.name
     return ""
+
+
+def applied_theme_name(explicit: str, colors: dict) -> str:
+    """The applied theme's name, most-authoritative source first.
+
+    An explicit ``--theme`` wins, then Omarchy's own ``current/theme.name``, then a
+    colour match against the installed themes, and only then the theme-set hook's stamp.
+    A stale stamp must never win over a live source (see issue #2).
+    """
+    return (explicit or omarchy_theme_name()
+            or resolve_theme_name(colors, theme_search_dirs()) or recorded_theme_name())
 
 
 # ── vault discovery ───────────────────────────────────────────────────────
@@ -408,8 +432,7 @@ def cmd_theme(args, plugin_cfg) -> int:
     if not colors:
         print(f"theme file {colors_path} carried no colours", file=sys.stderr)
         return 1
-    raw = (args.theme or recorded_theme_name()
-           or resolve_theme_name(colors, theme_search_dirs()))
+    raw = applied_theme_name(args.theme, colors)
     theme = slug_theme(raw) if raw else ""
     css = render_snippet(colors, theme)
     if args.print:

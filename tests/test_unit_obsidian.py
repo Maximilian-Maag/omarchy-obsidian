@@ -265,6 +265,41 @@ class ColorTests(unittest.TestCase):
             with unittest.mock.patch.dict(os.environ, {"XDG_STATE_HOME": d}):
                 self.assertEqual(obs.recorded_theme_name(), "")
 
+    def test_omarchy_theme_name_reads_current_theme_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            cur = pathlib.Path(d) / "omarchy" / "current"
+            cur.mkdir(parents=True)
+            (cur / "theme.name").write_text("Yellow On Black\n")
+            with unittest.mock.patch.dict(os.environ, {"XDG_STATE_HOME": d}):
+                self.assertEqual(obs.omarchy_theme_name(), "yellow-on-black")
+
+    def test_omarchy_theme_name_empty_when_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            with unittest.mock.patch.dict(os.environ, {"XDG_STATE_HOME": d}):
+                self.assertEqual(obs.omarchy_theme_name(), "")
+
+    def _precedence(self, *, explicit="", omarchy_name="", match="", stamp=""):
+        with unittest.mock.patch.object(obs, "omarchy_theme_name", lambda: omarchy_name), \
+             unittest.mock.patch.object(obs, "resolve_theme_name", lambda c, d: match), \
+             unittest.mock.patch.object(obs, "recorded_theme_name", lambda: stamp):
+            return obs.applied_theme_name(explicit, {})
+
+    def test_explicit_theme_wins(self):
+        self.assertEqual(self._precedence(explicit="nord", omarchy_name="hackerman",
+                                          match="gruvbox", stamp="tokyo-night"), "nord")
+
+    def test_omarchy_theme_name_beats_both_fallbacks(self):
+        self.assertEqual(self._precedence(omarchy_name="hackerman", match="gruvbox",
+                                          stamp="tokyo-night"), "hackerman")
+
+    def test_a_stale_stamp_never_wins_over_a_colour_match(self):
+        # the applied colours matched "hackerman"; only the hook stamp is stale
+        self.assertEqual(self._precedence(match="hackerman", stamp="tokyo-night"), "hackerman")
+
+    def test_the_stamp_is_only_the_last_resort(self):
+        self.assertEqual(self._precedence(stamp="tokyo-night"), "tokyo-night")
+
+
     def test_resolve_theme_name_matches_an_installed_theme(self):
         with tempfile.TemporaryDirectory() as d:
             theme = pathlib.Path(d) / "hackerman"
