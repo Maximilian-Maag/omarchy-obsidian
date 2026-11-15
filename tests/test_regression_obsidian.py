@@ -297,5 +297,36 @@ class SnippetTempSymlinkRegression(unittest.TestCase):
             self.assertEqual(victim.read_text(), "ORIGINAL")
 
 
+class NonDictPluginConfigRegression(unittest.TestCase):
+    """BUG (#7): read_json returned whatever json.loads yielded, so a
+    syntactically valid non-dict plugin config (5 / true) reached
+    ``plugin_cfg.get(...)`` and raised AttributeError. Normalise to a dict.
+    """
+
+    def test_load_plugin_config_normalises_a_non_dict(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "cfg.json"
+            for raw in ("5", "true", "null", '["a"]'):
+                p.write_text(raw)
+                self.assertEqual(obs._load_plugin_config(str(p)), {}, raw)
+
+    def test_theme_with_a_non_dict_config_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            vault = root / "vault"
+            (vault / ".obsidian").mkdir(parents=True)
+            oj = root / "obsidian.json"
+            oj.write_text(json.dumps({"vaults": {"x": {"path": str(vault), "open": True}}}))
+            cfg = root / "cfg.json"
+            cfg.write_text("5")
+            colors = root / "colors.toml"
+            colors.write_text('background = "#0B0C16"\n')
+            r = subprocess.run([sys.executable, str(CLI), "--obsidian-json", str(oj),
+                                "--config", str(cfg), "theme", "--colors", str(colors)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotIn("AttributeError", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

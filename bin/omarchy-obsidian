@@ -414,9 +414,16 @@ def open_uri(uri: str, opener: str | None = None) -> int:
 
 
 def _load_plugin_config(path: str | None) -> dict:
-    """Read the plugin config: an explicit ``--config`` or the shipped one."""
+    """Read the plugin config: an explicit ``--config`` or the shipped one.
+
+    ``read_json`` returns whatever ``json.loads`` yields, so a syntactically
+    valid but non-dict document must be normalised here — otherwise it reaches
+    ``plugin_cfg.get(...)`` and raises ``AttributeError`` (#7), unlike the
+    appearance.json path which re-checks ``isinstance(data, dict)``.
+    """
     target = expand(path) if path else default_config_path()
-    return read_json(target, {})
+    data = read_json(target, {})
+    return data if isinstance(data, dict) else {}
 
 
 def _resolve_vault(args, plugin_cfg: dict):
