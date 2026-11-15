@@ -48,8 +48,13 @@ else
 fi
 
 # ── 5. Generate the snippet for the currently applied theme ───────────────────
-if command -v omarchy-obsidian >/dev/null 2>&1; then
-  omarchy-obsidian theme && echo "  Wrote the vault CSS snippet."
+# Call the CLI by its absolute checkout path, not by name: a failed step-2
+# symlink (no sudo, /usr/local/bin not on PATH) must not silently skip snippet
+# generation and still exit 0 (#5).
+if "$BIN_SRC" theme; then
+  echo "  Wrote the vault CSS snippet."
+else
+  echo "  WARNING: could not generate the vault CSS snippet — run 'omarchy-obsidian theme' later."
 fi
 
 echo ""

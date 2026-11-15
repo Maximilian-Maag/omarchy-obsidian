@@ -236,5 +236,21 @@ class ShippedConfigRegression(unittest.TestCase):
             self.assertTrue((vault / ".obsidian" / "snippets" / "shipped-snippet.css").is_file())
 
 
+class InstallUsesAbsoluteCliPath(unittest.TestCase):
+    """BUG (#5): install.sh guarded the snippet step with ``command -v
+    omarchy-obsidian``, so a failed symlink step (no sudo, /usr/local/bin not on
+    PATH) silently skipped snippet generation and still exited 0. It must invoke
+    the CLI by its absolute checkout path.
+    """
+
+    def test_install_does_not_guard_on_command_v(self):
+        text = (ROOT / "install.sh").read_text()
+        self.assertNotIn("command -v omarchy-obsidian", text)
+
+    def test_install_runs_the_cli_by_absolute_path(self):
+        text = (ROOT / "install.sh").read_text()
+        self.assertIn('"$BIN_SRC" theme', text)
+
+
 if __name__ == "__main__":
     unittest.main()
