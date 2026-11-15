@@ -2,6 +2,17 @@
 
 All notable changes to omarchy-obsidian are documented here.
 
+## [0.1.4] — 2026-11-15
+
+### Fixed
+- **The shipped `config/obsidian.json` had no reader** (#4). The repo ships a config, but
+  the CLI defaulted `--config` to `~/.config/omarchy-obsidian/config.json` — a path nothing
+  ever creates — so the shipped config was dead. The CLI now reads the config shipped
+  beside it (`<plugin>/config/obsidian.json`, resolved through the installed symlink),
+  matching how the repo's other plugins consume their `config/<name>.json`. A regression
+  test runs a relocated copy of the CLI against its own `config/obsidian.json` and asserts
+  the shipped snippet name is what gets written.
+
 ## [0.1.3] — 2026-11-15
 
 ### Fixed

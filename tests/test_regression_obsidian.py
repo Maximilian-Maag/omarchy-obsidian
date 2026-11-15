@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -196,6 +197,43 @@ class SnippetEnablementRegression(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
             self.assertEqual(data["enabledCssSnippets"], ["my-theme"])
+
+
+class ShippedConfigRegression(unittest.TestCase):
+    """BUG (#4): the repo shipped config/obsidian.json, but the CLI read
+    ~/.config/omarchy-obsidian/config.json — a path nothing ever creates — so the
+    shipped config was dead. The CLI must consume the config shipped next to it, the
+    way the repo's other plugins read <plugin>/config/<name>.json.
+    """
+
+    def test_default_config_is_the_shipped_file_not_the_dotconfig_path(self):
+        self.assertEqual(obs.default_config_path(), ROOT / "config" / "obsidian.json")
+        self.assertNotIn(".config/omarchy-obsidian", str(obs.default_config_path()))
+
+    def test_cli_consumes_the_config_shipped_beside_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            plug = root / "plugin"
+            (plug / "bin").mkdir(parents=True)
+            (plug / "config").mkdir()
+            shutil.copy(CLI, plug / "bin" / "omarchy-obsidian")
+            # a snippet name that differs from the built-in default, so reading the
+            # shipped file is observable in the output
+            (plug / "config" / "obsidian.json").write_text('{"snippet": "shipped-snippet"}')
+
+            vault = root / "vault"
+            (vault / ".obsidian").mkdir(parents=True)
+            oj = root / "obsidian.json"
+            oj.write_text(json.dumps({"vaults": {"x": {"path": str(vault), "open": True}}}))
+            colors = root / "colors.toml"
+            colors.write_text('background = "#0B0C16"\n')
+
+            r = subprocess.run([sys.executable, str(plug / "bin" / "omarchy-obsidian"),
+                                "--obsidian-json", str(oj),
+                                "theme", "--colors", str(colors)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((vault / ".obsidian" / "snippets" / "shipped-snippet.css").is_file())
 
 
 if __name__ == "__main__":

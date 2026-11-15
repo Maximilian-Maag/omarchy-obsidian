@@ -424,6 +424,26 @@ class SnippetEnableTests(unittest.TestCase):
             self.assertEqual(target.read_text(), "KEEP")
 
 
+class ConfigPathTests(unittest.TestCase):
+    """Issue #4: the shipped config/obsidian.json must be the config the CLI reads."""
+
+    def test_plugin_dir_is_the_repo_root(self):
+        self.assertEqual(obs.plugin_dir(), ROOT)
+
+    def test_default_config_path_is_the_shipped_file(self):
+        self.assertEqual(obs.default_config_path(), ROOT / "config" / "obsidian.json")
+        self.assertTrue(obs.default_config_path().is_file())
+
+    def test_load_config_none_reads_the_shipped_file(self):
+        self.assertEqual(obs._load_plugin_config(None).get("snippet"), "omarchy-theme")
+
+    def test_load_config_explicit_path_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "c.json"
+            p.write_text('{"snippet": "z"}')
+            self.assertEqual(obs._load_plugin_config(str(p))["snippet"], "z")
+
+
 class OpenTests(unittest.TestCase):
     def test_open_uri_uses_explicit_opener(self):
         with unittest.mock.patch.object(obs.subprocess, "run") as run:

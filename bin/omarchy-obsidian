@@ -368,6 +368,21 @@ def bindings_file() -> pathlib.Path:
     return pathlib.Path(__file__).resolve().parent / "bindings.lua"
 
 
+def plugin_dir() -> pathlib.Path:
+    """This plugin's checkout — the installed CLI is a symlink back into it."""
+    return pathlib.Path(__file__).resolve().parent.parent
+
+
+def default_config_path() -> pathlib.Path:
+    """The config shipped with the plugin, consumed in place.
+
+    Every other plugin in this repo reads ``<plugin>/config/<name>.json`` directly
+    from its checkout (resolved through the installed symlink) rather than from an
+    ``~/.config`` copy nothing installs, so the shipped config is never orphaned.
+    """
+    return plugin_dir() / "config" / "obsidian.json"
+
+
 def bindings_text() -> str:
     try:
         return bindings_file().read_text()
@@ -387,8 +402,10 @@ def open_uri(uri: str, opener: str | None = None) -> int:
 # ── CLI ───────────────────────────────────────────────────────────────────
 
 
-def _load_plugin_config(path: str) -> dict:
-    return read_json(expand(path), {})
+def _load_plugin_config(path: str | None) -> dict:
+    """Read the plugin config: an explicit ``--config`` or the shipped one."""
+    target = expand(path) if path else default_config_path()
+    return read_json(target, {})
 
 
 def _resolve_vault(args, plugin_cfg: dict):
@@ -511,8 +528,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="omarchy-obsidian", description=__doc__)
     ap.add_argument("--obsidian-json", default=DEFAULT_OBSIDIAN_JSON,
                     help="path to Obsidian's obsidian.json")
-    ap.add_argument("--config", default="~/.config/omarchy-obsidian/config.json",
-                    help="plugin config (vault, snippet)")
+    ap.add_argument("--config", default=None,
+                    help="plugin config (vault, snippet); default: the shipped config/obsidian.json")
     ap.add_argument("--vault-path", help="use this vault directory directly")
     ap.add_argument("--vault", help="select a vault by id, path or folder name")
     # Options shared by every subcommand, so `--json`/`--date` work after the verb.
