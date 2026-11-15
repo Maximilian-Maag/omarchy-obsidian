@@ -22,6 +22,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 
 # ── paths / defaults ──────────────────────────────────────────────────────
@@ -319,12 +320,25 @@ def snippet_path(vault: pathlib.Path, name: str) -> pathlib.Path:
     return vault / SNIPPET_DIR / f"{name}.css"
 
 
-def write_snippet(path: pathlib.Path, css: str) -> None:
-    """Write atomically — never through a symlink into the plugin itself."""
+def _write_atomic(path: pathlib.Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically, never through a symlink.
+
+    The destination is swapped in with ``os.replace`` (so a symlink AT the
+    destination is replaced, not followed). The temp file is created with
+    ``tempfile.mkstemp`` — unpredictable name, ``O_CREAT|O_EXCL``, mode 0600 —
+    so a pre-existing symlink at a predictable ``<name>.tmp`` path cannot be
+    written through to its target (#6).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(css)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
     os.replace(tmp, path)
+
+
+def write_snippet(path: pathlib.Path, css: str) -> None:
+    """Write the snippet atomically — never through a symlink into the plugin."""
+    _write_atomic(path, css)
 
 
 def appearance_path(vault: pathlib.Path) -> pathlib.Path:
@@ -334,10 +348,7 @@ def appearance_path(vault: pathlib.Path) -> pathlib.Path:
 
 def write_json_atomic(path: pathlib.Path, data) -> None:
     """Write JSON atomically — never through a symlink (same contract as write_snippet)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n")
-    os.replace(tmp, path)
+    _write_atomic(path, json.dumps(data, indent=2) + "\n")
 
 
 def enable_snippet(vault: pathlib.Path, name: str) -> pathlib.Path:

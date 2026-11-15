@@ -252,5 +252,50 @@ class InstallUsesAbsoluteCliPath(unittest.TestCase):
         self.assertIn('"$BIN_SRC" theme', text)
 
 
+class SnippetTempSymlinkRegression(unittest.TestCase):
+    """BUG (#6): write_snippet's temp path was the predictable ``<name>.tmp`` and
+    ``write_text`` FOLLOWS a symlink, so a pre-existing ``omarchy-theme.css.tmp``
+    symlink was written through to its target before the rename. The temp must be
+    created with an unpredictable name / O_EXCL so it cannot be followed.
+    """
+
+    def test_predictable_tmp_symlink_is_not_written_through(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            victim = root / "victim.txt"
+            victim.write_text("ORIGINAL")
+            (root / "snippet.css.tmp").symlink_to(victim)
+            obs.write_snippet(root / "snippet.css", "GENERATED")
+            self.assertEqual(victim.read_text(), "ORIGINAL")
+            self.assertEqual((root / "snippet.css").read_text(), "GENERATED")
+
+    def test_json_temp_symlink_is_not_written_through(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            victim = root / "victim.json"
+            victim.write_text("ORIGINAL")
+            (root / "appearance.json.tmp").symlink_to(victim)
+            obs.write_json_atomic(root / "appearance.json", {"enabledCssSnippets": ["x"]})
+            self.assertEqual(victim.read_text(), "ORIGINAL")
+
+    def test_theme_command_leaves_a_planted_temp_symlink_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            vault = root / "vault"
+            (vault / ".obsidian" / "snippets").mkdir(parents=True)
+            victim = root / "victim.txt"
+            victim.write_text("ORIGINAL")
+            (vault / ".obsidian" / "snippets" / "omarchy-theme.css.tmp").symlink_to(victim)
+            oj = root / "obsidian.json"
+            oj.write_text(json.dumps({"vaults": {"x": {"path": str(vault), "open": True}}}))
+            colors = root / "colors.toml"
+            colors.write_text('background = "#0B0C16"\nforeground = "#ddf7ff"\n')
+            r = subprocess.run([sys.executable, str(CLI), "--obsidian-json", str(oj),
+                                "theme", "--colors", str(colors)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(victim.read_text(), "ORIGINAL")
+
+
 if __name__ == "__main__":
     unittest.main()
