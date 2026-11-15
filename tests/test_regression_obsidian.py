@@ -142,5 +142,61 @@ class TodayNoCreateRegression(unittest.TestCase):
             self.assertEqual(list(vault.iterdir()), [])   # nothing created
 
 
+class SnippetEnablementRegression(unittest.TestCase):
+    """BUG (#3): write_snippet dropped the CSS into .obsidian/snippets/ but never added
+    it to appearance.json's ``enabledCssSnippets``. Obsidian only loads a listed snippet,
+    so the whole theme integration was inert. Writing the snippet must enable it.
+    """
+
+    def _fixture(self, root):
+        vault = root / "vault"
+        (vault / ".obsidian" / "snippets").mkdir(parents=True)
+        oj = root / "obsidian.json"
+        oj.write_text(json.dumps({"vaults": {"x": {"path": str(vault), "open": True}}}))
+        colors = root / "colors.toml"
+        colors.write_text('background = "#0B0C16"\nforeground = "#ddf7ff"\n')
+        return vault, oj, colors
+
+    def _theme(self, oj, colors):
+        return subprocess.run([sys.executable, str(CLI), "--obsidian-json", str(oj),
+                               "theme", "--colors", str(colors)],
+                              capture_output=True, text=True)
+
+    def test_theme_lists_the_snippet_in_enabled_css_snippets(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault, oj, colors = self._fixture(pathlib.Path(d))
+            r = self._theme(oj, colors)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertIn("omarchy-theme", data["enabledCssSnippets"])
+
+    def test_theme_preserves_a_preexisting_appearance_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault, oj, colors = self._fixture(pathlib.Path(d))
+            appearance = vault / ".obsidian" / "appearance.json"
+            appearance.write_text(json.dumps(
+                {"cssTheme": "Catppuccin", "baseFontSize": 18,
+                 "enabledCssSnippets": ["mine"]}))
+            r = self._theme(oj, colors)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            data = json.loads(appearance.read_text())
+            self.assertEqual(data["cssTheme"], "Catppuccin")      # other keys survive
+            self.assertEqual(data["baseFontSize"], 18)
+            self.assertEqual(data["enabledCssSnippets"], ["mine", "omarchy-theme"])
+
+    def test_theme_honours_the_configured_snippet_name_in_appearance(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            vault, oj, colors = self._fixture(root)
+            cfg = root / "cfg.json"
+            cfg.write_text('{"snippet": "my-theme"}')
+            r = subprocess.run([sys.executable, str(CLI), "--obsidian-json", str(oj),
+                                "--config", str(cfg), "theme", "--colors", str(colors)],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertEqual(data["enabledCssSnippets"], ["my-theme"])
+
+
 if __name__ == "__main__":
     unittest.main()

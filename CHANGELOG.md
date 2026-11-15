@@ -2,6 +2,18 @@
 
 All notable changes to omarchy-obsidian are documented here.
 
+## [0.1.3] — 2026-11-15
+
+### Fixed
+- **The generated vault CSS snippet was never enabled, so the theme integration was
+  inert** (#3). `theme` wrote `.obsidian/snippets/omarchy-theme.css` but never added the
+  snippet to the vault's `appearance.json` `enabledCssSnippets`, and Obsidian only loads a
+  snippet that is listed there — the CSS was on disk and dead. `theme` now adds the snippet
+  name to `enabledCssSnippets` after writing it (creating `appearance.json` when missing,
+  preserving every other key, written atomically like the snippet). Unit + regression +
+  integration + e2e tests pin that the name is listed and that a pre-existing
+  `appearance.json` keeps its other keys.
+
 ## [0.1.2] — 2026-10-28
 
 ### Fixed

@@ -9,6 +9,7 @@ so it is loaded with a SourceFileLoader rather than imported by name. A stray
 import datetime
 import importlib.machinery
 import importlib.util
+import json
 import os
 import pathlib
 import sys
@@ -335,6 +336,92 @@ class ColorTests(unittest.TestCase):
             obs.write_snippet(link, "NEW")
             self.assertEqual(link.read_text(), "NEW")
             self.assertEqual(target.read_text(), "KEEP")   # never written through
+
+
+class SnippetEnableTests(unittest.TestCase):
+    """Issue #3: a generated snippet is only loaded once it is listed in the vault's
+    appearance.json ``enabledCssSnippets``, so writing it must enable it too."""
+
+    def test_appearance_path(self):
+        self.assertEqual(obs.appearance_path(pathlib.Path("/v")),
+                         pathlib.Path("/v/.obsidian/appearance.json"))
+
+    def test_enable_creates_appearance_json_with_the_snippet(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault = pathlib.Path(d)
+            obs.enable_snippet(vault, "omarchy-theme")
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertEqual(data["enabledCssSnippets"], ["omarchy-theme"])
+
+    def test_enable_preserves_other_keys_and_appends(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault = pathlib.Path(d)
+            (vault / ".obsidian").mkdir()
+            (vault / ".obsidian" / "appearance.json").write_text(
+                json.dumps({"cssTheme": "Catppuccin", "enabledCssSnippets": ["mine"]}))
+            obs.enable_snippet(vault, "omarchy-theme")
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertEqual(data["cssTheme"], "Catppuccin")
+            self.assertEqual(data["enabledCssSnippets"], ["mine", "omarchy-theme"])
+
+    def test_enable_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault = pathlib.Path(d)
+            obs.enable_snippet(vault, "omarchy-theme")
+            obs.enable_snippet(vault, "omarchy-theme")
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertEqual(data["enabledCssSnippets"], ["omarchy-theme"])
+
+    def test_enable_recovers_from_malformed_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault = pathlib.Path(d)
+            (vault / ".obsidian").mkdir()
+            (vault / ".obsidian" / "appearance.json").write_text("{not json")
+            obs.enable_snippet(vault, "x")
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertEqual(data["enabledCssSnippets"], ["x"])
+
+    def test_enable_replaces_a_non_list_enabled_key(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault = pathlib.Path(d)
+            (vault / ".obsidian").mkdir()
+            (vault / ".obsidian" / "appearance.json").write_text('{"enabledCssSnippets": "oops"}')
+            obs.enable_snippet(vault, "x")
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertEqual(data["enabledCssSnippets"], ["x"])
+
+    def test_enable_replaces_a_non_dict_document(self):
+        with tempfile.TemporaryDirectory() as d:
+            vault = pathlib.Path(d)
+            (vault / ".obsidian").mkdir()
+            (vault / ".obsidian" / "appearance.json").write_text('["stray"]')
+            obs.enable_snippet(vault, "x")
+            data = json.loads((vault / ".obsidian" / "appearance.json").read_text())
+            self.assertEqual(data, {"enabledCssSnippets": ["x"]})
+
+    def test_write_json_atomic_formats_and_replaces(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / "n" / "deep" / "json.json"   # two dirs missing
+            obs.write_json_atomic(path, {"a": 1})
+            # pins the two-space indent and the trailing newline (write contract)
+            self.assertEqual(path.read_text(), '{\n  "a": 1\n}\n')
+
+    def test_write_json_atomic_overwrites_an_existing_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / "json.json"   # parent already exists
+            obs.write_json_atomic(path, {"a": 1})
+            obs.write_json_atomic(path, {"a": 2})   # must not raise on existing dir
+            self.assertEqual(json.loads(path.read_text()), {"a": 2})
+
+    def test_write_json_atomic_replaces_a_symlink_without_touching_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = pathlib.Path(d) / "real.json"
+            target.write_text("KEEP")
+            link = pathlib.Path(d) / "link.json"
+            link.symlink_to(target)
+            obs.write_json_atomic(link, {"a": 1})
+            self.assertFalse(link.is_symlink())
+            self.assertEqual(target.read_text(), "KEEP")
 
 
 class OpenTests(unittest.TestCase):

@@ -58,4 +58,12 @@ else
   echo "e2e: FAILED — snippet missing or wrong palette" >&2; exit 1
 fi
 
+# 3b. ...and the snippet is ENABLED in appearance.json, or Obsidian never loads it
+APPEARANCE="$VAULT/.obsidian/appearance.json"
+if [[ -f "$APPEARANCE" ]] && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "omarchy-theme" in d["enabledCssSnippets"]' "$APPEARANCE"; then
+  echo "e2e: ok — snippet enabled in appearance.json"
+else
+  echo "e2e: FAILED — snippet not enabled in appearance.json" >&2; exit 1
+fi
+
 echo "e2e: all checks passed"

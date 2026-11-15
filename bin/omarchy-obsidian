@@ -327,6 +327,40 @@ def write_snippet(path: pathlib.Path, css: str) -> None:
     os.replace(tmp, path)
 
 
+def appearance_path(vault: pathlib.Path) -> pathlib.Path:
+    """The vault's Obsidian appearance settings file."""
+    return vault / ".obsidian" / "appearance.json"
+
+
+def write_json_atomic(path: pathlib.Path, data) -> None:
+    """Write JSON atomically — never through a symlink (same contract as write_snippet)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.replace(tmp, path)
+
+
+def enable_snippet(vault: pathlib.Path, name: str) -> pathlib.Path:
+    """Add `name` to the vault's ``enabledCssSnippets`` list.
+
+    Obsidian only loads a snippet that is listed there, so writing the CSS alone
+    leaves the whole theme integration inert (issue #3). A missing or malformed
+    ``appearance.json`` is created; every other key is preserved untouched.
+    """
+    path = appearance_path(vault)
+    data = read_json(path, {})
+    if not isinstance(data, dict):
+        data = {}
+    enabled = data.get("enabledCssSnippets")
+    if not isinstance(enabled, list):
+        enabled = []
+    if name not in enabled:
+        enabled.append(name)
+    data["enabledCssSnippets"] = enabled
+    write_json_atomic(path, data)
+    return path
+
+
 # ── bindings ──────────────────────────────────────────────────────────────
 
 
@@ -445,10 +479,13 @@ def cmd_theme(args, plugin_cfg) -> int:
     name = args.snippet or plugin_cfg.get("snippet") or DEFAULT_SNIPPET
     path = snippet_path(vault, name)
     write_snippet(path, css)
+    appearance = enable_snippet(vault, name)
     if args.json:
-        print(json.dumps({"path": str(path), "theme": theme, "keys": sorted(colors)}))
+        print(json.dumps({"path": str(path), "appearance": str(appearance),
+                          "theme": theme, "keys": sorted(colors)}))
     else:
         print(f"wrote {path} ({theme})")
+        print(f"enabled {name} in {appearance}")
     return 0
 
 

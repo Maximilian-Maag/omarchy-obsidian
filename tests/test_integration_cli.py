@@ -143,6 +143,18 @@ class CliIntegration(unittest.TestCase):
         self.assertIn("--interactive-accent: #82FB9C;", css)
         self.assertIn("Applied theme: tokyo-night", css)
 
+    def test_theme_enables_the_snippet_in_appearance_json(self):
+        self.run_cli("theme", "--colors", str(self.colors), "--theme", "Tokyo Night")
+        appearance = self.vault / ".obsidian" / "appearance.json"
+        self.assertTrue(appearance.is_file())
+        self.assertIn("omarchy-theme", json.loads(appearance.read_text())["enabledCssSnippets"])
+
+    def test_theme_json_reports_the_appearance_file(self):
+        r = self.run_cli("theme", "--colors", str(self.colors), "--json")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        data = json.loads(r.stdout)
+        self.assertTrue(data["appearance"].endswith(".obsidian/appearance.json"))
+
     def test_theme_names_the_recorded_applied_theme(self):
         state = self.root / "state" / "omarchy-obsidian"
         state.mkdir(parents=True)
