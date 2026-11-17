@@ -2,6 +2,17 @@
 
 All notable changes to omarchy-obsidian are documented here.
 
+## [0.2.0] — 2026-11-15
+
+### Added
+- **`install.sh --uninstall`.** Reverses exactly what the installer added: the
+  `/usr/local/bin` symlink (only when it points into this checkout), the
+  `theme-set` hook, the copied keybinding module and its `require` block, and
+  everything written into the vault — the generated CSS snippet and its
+  `enabledCssSnippets` entry (the vault is resolved through the CLI, so the
+  uninstall and the install can never drift). `tests/shell/test_uninstall.sh`
+  pins a full install → uninstall round-trip as byte-identical (sha256).
+
 ## [0.1.4] — 2026-11-15
 
 ### Fixed
